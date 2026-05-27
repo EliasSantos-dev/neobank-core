@@ -1,0 +1,11 @@
+# specs/planos locais — nunca versionar
+.specs/
+
+# Go
+/bin/
+*.test
+*.out
+coverage.*
+
+# env
+.env
