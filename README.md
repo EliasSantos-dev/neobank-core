@@ -6,7 +6,7 @@
 
 Núcleo de **ledger de partidas dobradas** para uma carteira digital, em Go + PostgreSQL. Correto, concorrente-safe e auditável por construção.
 
-Este repositório é o **M1 (Ledger Core)** de uma plataforma maior (ver [Roadmap](#roadmap)). O foco aqui é o que mais importa em fintech: **integridade do dinheiro sob concorrência**.
+Cobre o **M1 (Ledger Core)** e o **M2 (Carteira/Auth)** de uma plataforma maior (ver [Roadmap](#roadmap)). O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência**, com uma carteira usável por cima.
 
 ## Princípio: history-as-truth
 
@@ -45,13 +45,28 @@ O teste `TestTransfer_Concurrent_NoDoubleSpend` dispara 50 transferências paral
 
 ## API
 
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/accounts` | Cria conta (`{"currency":"BRL","type":"wallet"}`). |
-| `POST` | `/transfers` | Move dinheiro. Header `Idempotency-Key` obrigatório. |
-| `GET`  | `/accounts/{id}/balance` | Saldo derivado atual. |
+Carteira digital sobre o ledger. Autenticação por **JWT** (bcrypt nas senhas); rotas privadas exigem `Authorization: Bearer <token>`. Movimentações de dinheiro exigem header `Idempotency-Key`.
 
-Erros de domínio mapeados para HTTP: saldo insuficiente → `422`, conflito de idempotência → `409`, valor inválido → `400`.
+| Método | Rota | Auth | Descrição |
+|--------|------|------|-----------|
+| `POST` | `/auth/register` | — | Cria usuário + carteira (`{"email","password"}`). |
+| `POST` | `/auth/login` | — | Devolve `{"access_token"}`. |
+| `GET`  | `/me` | ✅ | Dados do usuário + saldo. |
+| `POST` | `/me/deposit` | ✅ | `{"amount"}` — tesouraria→carteira. |
+| `POST` | `/me/withdraw` | ✅ | `{"amount"}` — carteira→tesouraria. |
+| `POST` | `/transfers` | ✅ | `{"to_email","amount"}` — entre usuários. |
+| `GET`  | `/me/statement` | ✅ | Extrato paginado (`?limit=&offset=`). |
+
+Depósito/saque/transferência são, por baixo, transferências de partida dobrada no ledger (depósito e saque usam a conta **tesouraria** — funding simulado até haver gateway real). Erros mapeados: não autenticado → `401`, destinatário inexistente → `404`, e-mail já usado → `409`, saldo insuficiente → `422`, valor inválido → `400`.
+
+### Exemplo
+
+```bash
+curl -XPOST localhost:8080/auth/register -d '{"email":"a@b.com","password":"segredo123"}'
+TOKEN=$(curl -s -XPOST localhost:8080/auth/login -d '{"email":"a@b.com","password":"segredo123"}' | jq -r .access_token)
+curl -XPOST localhost:8080/me/deposit -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: dep-1" -d '{"amount":5000}'
+curl localhost:8080/me -H "Authorization: Bearer $TOKEN"
+```
 
 ## Como rodar
 
@@ -80,6 +95,8 @@ make race    # com detector de corrida — inclui o teste de concorrência
 
 Os testes de integração criam/derrubam um banco efêmero por teste. Por padrão usam o Postgres local via socket; ajuste com `NEOBANK_TEST_DSN`.
 
+> Defina `JWT_SECRET` ao subir a API (`make run`). Sem ele, um segredo de desenvolvimento é usado e um aviso é logado — não use em produção.
+
 ## Arquitetura
 
 ```
@@ -97,14 +114,15 @@ Fronteiras isoladas: o domínio (`ledger`) não conhece banco nem HTTP e é test
 
 ## Roadmap
 
-Este é o M1. Próximas fatias (cada uma com seu próprio ciclo):
+Plataforma construída em fatias, cada uma com seu próprio ciclo:
 
-- **M2** — Camada carteira/neobank: contas de usuário, depósitos/saques, auth, extrato.
+- ✅ **M1** — Ledger Core: partidas dobradas, saldo derivado, concorrência.
+- ✅ **M2** — Carteira/Auth: usuários, JWT, depósito/saque/transferência, extrato.
 - **M3** — IA de segurança de transações: risk scoring em tempo real (regras → ML), na frente do ledger.
 - **M4** — Event-driven + reconciliação (outbox, eventos, replay).
 - **M5** — Gateway de pagamento + multi-moeda/FX.
 - **M6** — Credit scoring + dashboard de observabilidade.
 
-## Fora de escopo do M1
+## Fora de escopo (até aqui)
 
-Auth, multi-moeda, eventos, IA, gateway externo e snapshots de saldo são milestones posteriores. M1 é, deliberadamente, **só um ledger correto + API mínima + testes que provam a correção**.
+Multi-moeda, eventos/outbox, IA, gateway externo, snapshots de saldo, refresh tokens e reset de senha são milestones posteriores.
