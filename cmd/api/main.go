@@ -18,6 +18,12 @@ func main() {
 		dsn = "postgres://neobank:neobank@localhost:5432/neobank?sslmode=disable"
 	}
 
+	secret := []byte(os.Getenv("JWT_SECRET"))
+	if len(secret) == 0 {
+		log.Warn("JWT_SECRET vazio — usando segredo de desenvolvimento (NÃO use em produção)")
+		secret = []byte("dev-secret-change-me")
+	}
+
 	pool, err := store.NewPool(context.Background(), dsn)
 	if err != nil {
 		log.Error("conexão com o banco", "err", err)
@@ -25,9 +31,9 @@ func main() {
 	}
 	defer pool.Close()
 
-	srv := api.NewServer(store.New(pool))
+	srv := api.NewServer(store.New(pool), secret)
 	addr := ":8080"
-	log.Info("ledger ouvindo", "addr", addr)
+	log.Info("neobank ouvindo", "addr", addr)
 	if err := http.ListenAndServe(addr, srv); err != nil {
 		log.Error("servidor", "err", err)
 		os.Exit(1)
