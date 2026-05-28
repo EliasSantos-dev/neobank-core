@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -33,4 +34,16 @@ func (h handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 func userID(r *http.Request) uuid.UUID {
 	id, _ := r.Context().Value(userIDKey).(uuid.UUID)
 	return id
+}
+
+// requireAdmin protege rotas administrativas com um token estático (X-Admin-Token).
+func (h handler) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		got := r.Header.Get("X-Admin-Token")
+		if h.adminToken == "" || subtle.ConstantTimeCompare([]byte(got), []byte(h.adminToken)) != 1 {
+			writeErr(w, http.StatusUnauthorized, "admin token inválido")
+			return
+		}
+		next(w, r)
+	}
 }

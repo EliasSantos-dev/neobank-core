@@ -42,30 +42,6 @@ func (h handler) withdraw(w http.ResponseWriter, r *http.Request) {
 	h.doTransfer(w, r, u.WalletAccountID, ledger.TreasuryBRL, req.Amount)
 }
 
-type transferUserReq struct {
-	ToEmail string `json:"to_email"`
-	Amount  int64  `json:"amount"`
-}
-
-func (h handler) transferToUser(w http.ResponseWriter, r *http.Request) {
-	var req transferUserReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "json inválido")
-		return
-	}
-	sender, err := h.s.GetUserByID(r.Context(), userID(r))
-	if err != nil {
-		writeErr(w, statusFor(err), err.Error())
-		return
-	}
-	recipient, _, err := h.s.GetUserByEmail(r.Context(), req.ToEmail)
-	if err != nil {
-		writeErr(w, statusFor(err), err.Error())
-		return
-	}
-	h.doTransfer(w, r, sender.WalletAccountID, recipient.WalletAccountID, req.Amount)
-}
-
 // doTransfer encapsula a chamada ao ledger com a Idempotency-Key do header.
 func (h handler) doTransfer(w http.ResponseWriter, r *http.Request, from, to uuid.UUID, amount int64) {
 	key := r.Header.Get("Idempotency-Key")

@@ -5,14 +5,18 @@ import (
 	"net/http"
 
 	"github.com/EliasSantos-dev/neobank-core/internal/ledger"
+	"github.com/EliasSantos-dev/neobank-core/internal/store"
 	"github.com/EliasSantos-dev/neobank-core/internal/user"
 )
 
 // statusFor mapeia erros de domínio para status HTTP.
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, ledger.ErrAccountNotFound), errors.Is(err, user.ErrUserNotFound):
+	case errors.Is(err, ledger.ErrAccountNotFound), errors.Is(err, user.ErrUserNotFound),
+		errors.Is(err, store.ErrIntentNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, store.ErrNotUnderReview):
+		return http.StatusConflict
 	case errors.Is(err, ledger.ErrInsufficientFunds),
 		errors.Is(err, ledger.ErrCurrencyMismatch),
 		errors.Is(err, ledger.ErrSameAccount):

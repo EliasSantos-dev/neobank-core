@@ -15,7 +15,7 @@ import (
 
 func newSrv(t *testing.T) *httptest.Server {
 	pool := itest.NewPostgres(t)
-	srv := httptest.NewServer(api.NewServer(store.New(pool), []byte("test-secret")))
+	srv := httptest.NewServer(api.NewServer(store.New(pool), []byte("test-secret"), "admin-token"))
 	t.Cleanup(srv.Close)
 	return srv
 }

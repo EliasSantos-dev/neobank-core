@@ -38,27 +38,37 @@ func meBalance(t *testing.T, base, tok string) int64 {
 	return me.Balance
 }
 
-func TestWalletFlow(t *testing.T) {
+// TestDepositWithdraw cobre as operações síncronas de tesouraria.
+// (Transferência entre usuários é assíncrona — coberta nos testes e2e com worker.)
+func TestDepositWithdraw(t *testing.T) {
+	srv := newSrv(t)
+	register(t, srv.URL, "a@b.com", "segredo123")
+	tok := login(t, srv.URL, "a@b.com", "segredo123")
+
+	resp := authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 5000})
+	resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	resp = authedPost(t, srv.URL, "/me/withdraw", tok, map[string]int64{"amount": 500})
+	resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	require.EqualValues(t, 4500, meBalance(t, srv.URL, tok))
+}
+
+// TestTransferCreatesIntent verifica que a transferência vira intenção (202),
+// sem efetivar na hora.
+func TestTransferCreatesIntent(t *testing.T) {
 	srv := newSrv(t)
 	register(t, srv.URL, "a@b.com", "segredo123")
 	register(t, srv.URL, "c@d.com", "segredo123")
-	tokA := login(t, srv.URL, "a@b.com", "segredo123")
-	tokC := login(t, srv.URL, "c@d.com", "segredo123")
+	tok := login(t, srv.URL, "a@b.com", "segredo123")
+	authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 5000}).Body.Close()
 
-	resp := authedPost(t, srv.URL, "/me/deposit", tokA, map[string]int64{"amount": 5000})
-	resp.Body.Close()
-	require.Equal(t, http.StatusCreated, resp.StatusCode)
-
-	resp = authedPost(t, srv.URL, "/transfers", tokA, map[string]any{"to_email": "c@d.com", "amount": 2000})
-	resp.Body.Close()
-	require.Equal(t, http.StatusCreated, resp.StatusCode)
-
-	resp = authedPost(t, srv.URL, "/me/withdraw", tokC, map[string]int64{"amount": 500})
-	resp.Body.Close()
-	require.Equal(t, http.StatusCreated, resp.StatusCode)
-
-	require.EqualValues(t, 3000, meBalance(t, srv.URL, tokA))
-	require.EqualValues(t, 1500, meBalance(t, srv.URL, tokC))
+	resp := authedPost(t, srv.URL, "/transfers", tok, map[string]any{"to_email": "c@d.com", "amount": 1000})
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusAccepted, resp.StatusCode) // 202, ainda não efetivou
+	require.EqualValues(t, 5000, meBalance(t, srv.URL, tok))
 }
 
 func TestWithdrawInsufficient(t *testing.T) {

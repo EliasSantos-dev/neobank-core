@@ -9,8 +9,9 @@ import (
 )
 
 type handler struct {
-	s      *store.Store
-	secret []byte
+	s          *store.Store
+	secret     []byte
+	adminToken string
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
