@@ -70,6 +70,32 @@ func TestWithdrawInsufficient(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
 
+func TestStatement(t *testing.T) {
+	srv := newSrv(t)
+	register(t, srv.URL, "a@b.com", "segredo123")
+	tok := login(t, srv.URL, "a@b.com", "segredo123")
+	r := authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 5000})
+	r.Body.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/me/statement?limit=10", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var entries []struct {
+		Direction string `json:"Direction"`
+		Amount    int64  `json:"Amount"`
+		Currency  string `json:"Currency"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&entries))
+	require.Len(t, entries, 1)
+	require.Equal(t, "credit", entries[0].Direction)
+	require.EqualValues(t, 5000, entries[0].Amount)
+	require.Equal(t, "BRL", entries[0].Currency)
+}
+
 func TestTransferUnknownRecipient(t *testing.T) {
 	srv := newSrv(t)
 	register(t, srv.URL, "a@b.com", "segredo123")
