@@ -5,9 +5,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/EliasSantos-dev/neobank-core/internal/api"
+	"github.com/EliasSantos-dev/neobank-core/internal/risk"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
+	"github.com/EliasSantos-dev/neobank-core/internal/worker"
 )
 
 func main() {
@@ -24,6 +27,11 @@ func main() {
 		secret = []byte("dev-secret-change-me")
 	}
 
+	adminToken := os.Getenv("ADMIN_TOKEN")
+	if adminToken == "" {
+		log.Warn("ADMIN_TOKEN vazio — endpoints administrativos ficarão inacessíveis")
+	}
+
 	pool, err := store.NewPool(context.Background(), dsn)
 	if err != nil {
 		log.Error("conexão com o banco", "err", err)
@@ -31,7 +39,16 @@ func main() {
 	}
 	defer pool.Close()
 
-	srv := api.NewServer(store.New(pool), secret)
+	st := store.New(pool)
+
+	// Worker de risco em background: pontua intenções pendentes.
+	eng := risk.NewEngine(risk.RuleReasoningAdvisor{}, 50)
+	w := worker.New(st, eng)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Run(ctx, 2*time.Second)
+
+	srv := api.NewServer(st, secret, adminToken)
 	addr := ":8080"
 	log.Info("neobank ouvindo", "addr", addr)
 	if err := http.ListenAndServe(addr, srv); err != nil {
