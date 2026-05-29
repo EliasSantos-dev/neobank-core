@@ -6,7 +6,7 @@
 
 Núcleo de **ledger de partidas dobradas** para uma carteira digital, em Go + PostgreSQL. Correto, concorrente-safe e auditável por construção.
 
-Cobre **M1 (Ledger Core)**, **M2 (Carteira/Auth)**, **M3 (Segurança de transações)**, **M4 (Event-driven + Reconciliação)** e **M5a (Gateway de pagamento)** de uma plataforma maior (ver [Roadmap](#roadmap)). O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência**, com carteira, risco com revisão humana, eventos confiáveis e cash-in/out via gateway por cima.
+Cobre **M1–M5b** de uma plataforma maior (ver [Roadmap](#roadmap)): ledger, carteira/auth, risco com revisão humana, eventos confiáveis, gateway de pagamento e multi-moeda/FX. O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência** — agora preservada **por moeda**.
 
 ## Princípio: history-as-truth
 
@@ -55,6 +55,9 @@ Carteira digital sobre o ledger. Autenticação por **JWT** (bcrypt nas senhas);
 | `POST` | `/me/deposit` | ✅ | `{"amount"}` — cash-in via gateway (`202`, confirma por webhook). |
 | `POST` | `/me/withdraw` | ✅ | `{"amount"}` — cash-out via gateway com hold (`202`). |
 | `GET`  | `/me/payments` | ✅ | Lista os pagamentos (depósitos/saques) do usuário. |
+| `GET`  | `/me/wallets` | ✅ | Saldos por moeda do usuário. |
+| `POST` | `/me/wallets` | ✅ | `{"currency"}` cria a wallet da moeda. |
+| `POST` | `/me/convert` | ✅ | `{"from","to","amount"}` converte entre as próprias wallets (`Idempotency-Key`). |
 | `POST` | `/transfers` | ✅ | `{"to_email","amount"}` — cria **intenção** avaliada por risco (`202`). |
 | `GET`  | `/me/transfers` | ✅ | Lista as intenções do usuário (status, score, nível). |
 | `GET`  | `/me/statement` | ✅ | Extrato paginado (`?limit=&offset=`). |
@@ -109,6 +112,23 @@ POST /me/withdraw → hold wallet→gateway (reserva) + payout ─► webhook su
 - **Webhook idempotente** (`POST /webhooks/gateway`): dedup por `event_id` + guarda de estado terminal — reentrega não duplica efeito. Em produção seria validado por assinatura HMAC do provedor (seam documentado).
 - **Eventos** `payment.completed`/`payment.failed` no outbox, fluindo pela auditoria do M4.
 - **Conservação** preservada em todos os caminhos; a conta `gateway` (external) representa o dinheiro em trânsito.
+
+## Multi-moeda / FX (M5b)
+
+Cada usuário tem **uma wallet por moeda** (BRL, USD, EUR), criadas sob demanda. A **conversão** entre as próprias wallets preserva a conservação **por moeda**.
+
+```
+converter amount BRL → USD (mesma transação):
+  perna BRL:  wallet_BRL → fx_BRL   (debita usuário, credita câmbio BRL)
+  perna USD:  fx_USD → wallet_USD   (debita câmbio USD, credita usuário)
+  Σ BRL = 0 e Σ USD = 0  ·  o spread acumula nas contas fx (lucro da casa)
+```
+
+- **Contas de câmbio** (`fx_BRL/USD/EUR`, external): cada perna é mono-moeda, reaproveitando as partidas dobradas do M1. O `fx_quote` paga menos que o valor mid-market → o **spread** vira valor retido nas contas `fx`.
+- **Atomicidade + sem deadlock:** `ConvertCurrency` trava as 4 contas (2 wallets + 2 câmbio) `ORDER BY id FOR UPDATE` numa única transação, checa saldo, posta as duas pernas e emite `currency.converted` no outbox.
+- **Matemática:** `converted = floor(amount × rateE8 / 1e8)` com **`math/big`** (sem overflow) e arredondamento a favor da casa.
+- **Taxas:** `RateProvider` plugável (`internal/fx`) com `FakeRateProvider` (mid fixo + spread em bps); seam para uma API real. Par sem taxa → `422`.
+- **Reconciliação por moeda:** a conservação é verificada para **cada moeda** (somar BRL+USD não faz sentido); as contas `fx` entram no balanço de cada uma.
 
 ### Exemplo
 
@@ -166,6 +186,7 @@ internal/
   audit/       # consome eventos e materializa o event_log
   recon/       # verificação pura dos invariantes contábeis
   gateway/     # provedor de pagamento (fake) + service de cash-in/out
+  fx/          # taxas de câmbio (provider) + conversão (big.Int)
   api/         # transporte HTTP
 migrations/    # schema append-only (embutido via go:embed)
 ```
@@ -181,7 +202,7 @@ Plataforma construída em fatias, cada uma com seu próprio ciclo:
 - ✅ **M3** — Segurança de transações: motor de risco em camadas, worker e revisão humana.
 - ✅ **M4** — Event-driven + reconciliação: outbox transacional, relay → NATS, auditoria, invariantes.
 - ✅ **M5a** — Gateway de pagamento: cash-in/out via provedor plugável, webhook idempotente, hold no saque, recon×gateway.
-- **M5b** — Multi-moeda / FX: contas multi-moeda, conversão com spread.
+- ✅ **M5b** — Multi-moeda / FX: wallets por moeda, conversão atômica via contas de câmbio, conservação por moeda.
 - **M6** — Credit scoring + dashboard de observabilidade.
 
 ## Fora de escopo (até aqui)
