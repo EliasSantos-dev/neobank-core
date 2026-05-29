@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/EliasSantos-dev/neobank-core/internal/ledger"
@@ -95,6 +96,18 @@ func (s *Store) Transfer(ctx context.Context, p TransferParams) (ledger.Transfer
 			e.TransferID, e.AccountID, string(e.Direction), e.Amount, e.Currency); err != nil {
 			return ledger.Transfer{}, err
 		}
+	}
+
+	// Emite o evento de domínio na MESMA transação (outbox transacional).
+	payload, _ := json.Marshal(map[string]any{
+		"transfer_id":     tr.ID,
+		"from_account_id": from.ID,
+		"to_account_id":   to.ID,
+		"amount":          p.Amount,
+		"currency":        p.Currency,
+	})
+	if _, err := writeEventTx(ctx, tx, "transfer.completed", payload); err != nil {
+		return ledger.Transfer{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
