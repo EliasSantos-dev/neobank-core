@@ -6,7 +6,7 @@
 
 Núcleo de **ledger de partidas dobradas** para uma carteira digital, em Go + PostgreSQL. Correto, concorrente-safe e auditável por construção.
 
-Cobre **M1 (Ledger Core)**, **M2 (Carteira/Auth)** e **M3 (Segurança de transações)** de uma plataforma maior (ver [Roadmap](#roadmap)). O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência**, com uma carteira usável e uma camada de risco com revisão humana por cima.
+Cobre **M1 (Ledger Core)**, **M2 (Carteira/Auth)**, **M3 (Segurança de transações)** e **M4 (Event-driven + Reconciliação)** de uma plataforma maior (ver [Roadmap](#roadmap)). O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência**, com uma carteira usável, uma camada de risco com revisão humana e um pipeline de eventos confiável por cima.
 
 ## Princípio: history-as-truth
 
@@ -75,6 +75,22 @@ POST /transfers → intent (pending) ──(worker pontua)──┬─ baixo ris
 - **Worker** (`internal/worker`): goroutine que pontua as intenções pendentes (`ProcessOnce`, testável). *Nota: roda um único worker in-process e processa sequencialmente; múltiplos workers exigiriam `FOR UPDATE SKIP LOCKED` — fora do escopo atual.*
 - **Human-in-the-loop:** alto risco fica retido até um revisor (admin token) aprovar ou rejeitar.
 
+## Event-driven + Reconciliação (M4)
+
+Toda mudança de estado relevante emite um evento de domínio, com **entrega confiável** e um read-model de auditoria. Resolve o dual-write com o **Transactional Outbox**:
+
+```
+mudança de estado + evento  (MESMA transação → outbox)
+        │
+     relay (at-least-once) ──► NATS (embutido) ──► subscriber de auditoria ──► event_log (idempotente)
+```
+
+- **Outbox transacional** (`internal/store`): `transfer.completed`, `intent.under_review` e `intent.rejected` são gravados na mesma transação que os origina — se a tx aborta, não há evento órfão.
+- **Relay** (`internal/relay`): publica os eventos não-enviados no barramento e marca como publicados. Semântica **at-least-once** — consumidores são idempotentes (não exactly-once; é o trade-off honesto do outbox).
+- **Barramento NATS** (`internal/events`): servidor NATS **real, embutido no processo** com conexão in-process (sem Docker/porta). No deploy real, troca-se por um cluster NATS externo só na config de conexão.
+- **Auditoria** (`internal/audit`): assina `transfer.>`/`intent.>` e materializa um `event_log` idempotente (dedup pela PK do evento) — um read-model durável.
+- **Reconciliação** (`internal/recon`): verifica os invariantes contábeis — **conservação** (Σ saldos = 0), **partidas dobradas** (débito=crédito por transfer) e **não-negatividade** das wallets. Exposta em `POST /admin/reconcile` (admin token) e no job `cmd/reconcile` (exit ≠ 0 se não-saudável).
+
 ### Exemplo
 
 ```bash
@@ -116,12 +132,20 @@ Os testes de integração criam/derrubam um banco efêmero por teste. Por padrã
 ## Arquitetura
 
 ```
-cmd/api        # entrypoint HTTP
+cmd/api        # entrypoint HTTP (sobe worker, relay e auditoria)
 cmd/migrate    # aplica migrations embutidas (goose)
+cmd/reconcile  # job de reconciliação dos invariantes
 internal/
   money/       # value object de dinheiro (puro)
   ledger/      # domínio puro: tipos, invariantes, BuildEntries
-  store/       # adapter Postgres (pgx): transações, lock, idempotência
+  store/       # adapter Postgres (pgx): transações, lock, idempotência, outbox
+  user/ auth/  # identidade e autenticação (bcrypt + JWT)
+  risk/        # motor de risco em camadas (puro)
+  worker/      # processa intenções de transferência pendentes
+  events/      # barramento NATS embutido
+  relay/       # publica o outbox no barramento (at-least-once)
+  audit/       # consome eventos e materializa o event_log
+  recon/       # verificação pura dos invariantes contábeis
   api/         # transporte HTTP
 migrations/    # schema append-only (embutido via go:embed)
 ```
@@ -135,7 +159,7 @@ Plataforma construída em fatias, cada uma com seu próprio ciclo:
 - ✅ **M1** — Ledger Core: partidas dobradas, saldo derivado, concorrência.
 - ✅ **M2** — Carteira/Auth: usuários, JWT, depósito/saque/transferência, extrato.
 - ✅ **M3** — Segurança de transações: motor de risco em camadas, worker e revisão humana.
-- **M4** — Event-driven + reconciliação (outbox, eventos, replay).
+- ✅ **M4** — Event-driven + reconciliação: outbox transacional, relay → NATS, auditoria, invariantes.
 - **M5** — Gateway de pagamento + multi-moeda/FX.
 - **M6** — Credit scoring + dashboard de observabilidade.
 
