@@ -10,6 +10,7 @@ import (
 	"github.com/EliasSantos-dev/neobank-core/internal/api"
 	"github.com/EliasSantos-dev/neobank-core/internal/audit"
 	"github.com/EliasSantos-dev/neobank-core/internal/events"
+	"github.com/EliasSantos-dev/neobank-core/internal/gateway"
 	"github.com/EliasSantos-dev/neobank-core/internal/relay"
 	"github.com/EliasSantos-dev/neobank-core/internal/risk"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
@@ -65,7 +66,10 @@ func main() {
 	}
 	go relay.New(st, bus).Run(ctx, 1*time.Second)
 
-	srv := api.NewServer(st, secret, adminToken)
+	// Gateway de pagamento (provedor fake; trocável por HTTP real).
+	gw := gateway.NewService(st, gateway.NewFakeProvider())
+
+	srv := api.NewServer(st, secret, adminToken, gw)
 	addr := ":8080"
 	log.Info("neobank ouvindo", "addr", addr)
 	if err := http.ListenAndServe(addr, srv); err != nil {
