@@ -85,17 +85,8 @@ func (s *Store) Transfer(ctx context.Context, p TransferParams) (ledger.Transfer
 	}
 
 	// 5. Lança as duas pernas balanceadas (débito na origem, crédito no destino).
-	entries, err := ledger.BuildEntries(tr.ID, from, to, p.Amount)
-	if err != nil {
+	if err := postLegs(ctx, tx, tr.ID, from, to, p.Amount); err != nil {
 		return ledger.Transfer{}, err
-	}
-	for _, e := range entries {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO entries (transfer_id, account_id, direction, amount, currency)
-			 VALUES ($1, $2, $3, $4, $5)`,
-			e.TransferID, e.AccountID, string(e.Direction), e.Amount, e.Currency); err != nil {
-			return ledger.Transfer{}, err
-		}
 	}
 
 	// Emite o evento de domínio na MESMA transação (outbox transacional).
@@ -114,6 +105,24 @@ func (s *Store) Transfer(ctx context.Context, p TransferParams) (ledger.Transfer
 		return ledger.Transfer{}, err
 	}
 	return tr, nil
+}
+
+// postLegs insere as duas pernas balanceadas de uma transferência mono-moeda
+// usando a transação fornecida. Reutilizado por Transfer e ConvertCurrency.
+func postLegs(ctx context.Context, tx pgx.Tx, transferID uuid.UUID, from, to ledger.Account, amount int64) error {
+	entries, err := ledger.BuildEntries(transferID, from, to, amount)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO entries (transfer_id, account_id, direction, amount, currency)
+			 VALUES ($1, $2, $3, $4, $5)`,
+			e.TransferID, e.AccountID, string(e.Direction), e.Amount, e.Currency); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func lockAccounts(ctx context.Context, q querier, a, b uuid.UUID) (map[uuid.UUID]ledger.Account, error) {
