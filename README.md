@@ -6,7 +6,7 @@
 
 Núcleo de **ledger de partidas dobradas** para uma carteira digital, em Go + PostgreSQL. Correto, concorrente-safe e auditável por construção.
 
-Cobre o **M1 (Ledger Core)** e o **M2 (Carteira/Auth)** de uma plataforma maior (ver [Roadmap](#roadmap)). O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência**, com uma carteira usável por cima.
+Cobre **M1 (Ledger Core)**, **M2 (Carteira/Auth)** e **M3 (Segurança de transações)** de uma plataforma maior (ver [Roadmap](#roadmap)). O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência**, com uma carteira usável e uma camada de risco com revisão humana por cima.
 
 ## Princípio: history-as-truth
 
@@ -54,10 +54,26 @@ Carteira digital sobre o ledger. Autenticação por **JWT** (bcrypt nas senhas);
 | `GET`  | `/me` | ✅ | Dados do usuário + saldo. |
 | `POST` | `/me/deposit` | ✅ | `{"amount"}` — tesouraria→carteira. |
 | `POST` | `/me/withdraw` | ✅ | `{"amount"}` — carteira→tesouraria. |
-| `POST` | `/transfers` | ✅ | `{"to_email","amount"}` — entre usuários. |
+| `POST` | `/transfers` | ✅ | `{"to_email","amount"}` — cria **intenção** avaliada por risco (`202`). |
+| `GET`  | `/me/transfers` | ✅ | Lista as intenções do usuário (status, score, nível). |
 | `GET`  | `/me/statement` | ✅ | Extrato paginado (`?limit=&offset=`). |
+| `POST` | `/admin/transfers/{id}/review` | admin | `{"decision":"approve"\|"reject"}` (header `X-Admin-Token`). |
 
-Depósito/saque/transferência são, por baixo, transferências de partida dobrada no ledger (depósito e saque usam a conta **tesouraria** — funding simulado até haver gateway real). Erros mapeados: não autenticado → `401`, destinatário inexistente → `404`, e-mail já usado → `409`, saldo insuficiente → `422`, valor inválido → `400`.
+Depósito/saque são síncronos (tesouraria — funding simulado até haver gateway real). Transferência entre usuários passa pela **camada de risco** (ver abaixo). Erros mapeados: não autenticado → `401`, destinatário inexistente → `404`, e-mail já usado / intenção fora de revisão → `409`, saldo insuficiente → `422`, valor inválido → `400`.
+
+## Segurança de transações (M3)
+
+Transferências usuário→usuário não efetivam direto: viram uma **intenção** pontuada por um motor de risco. O dinheiro só toca o ledger quando aprovado — **sem clawback**, a integridade do M1 fica intocada.
+
+```
+POST /transfers → intent (pending) ──(worker pontua)──┬─ baixo risco → completed (efetiva)
+                                                       └─ alto risco  → under_review ─(revisão)─┬ approve → completed
+                                                                                                └ reject  → rejected
+```
+
+- **Motor em camadas** (`internal/risk`, domínio puro): regras determinísticas (velocity, valor atípico, novo destinatário, drain) + anomalia estatística (z-score do valor) + um **advisor** que explica o veredito em linguagem natural. O advisor é uma interface: o default é determinístico (`RuleReasoningAdvisor`); um `LLMAdvisor` pode plugar via `LLM_API_KEY` (seam pronto, default não usa rede).
+- **Worker** (`internal/worker`): goroutine que pontua as intenções pendentes (`ProcessOnce`, testável). *Nota: roda um único worker in-process e processa sequencialmente; múltiplos workers exigiriam `FOR UPDATE SKIP LOCKED` — fora do escopo atual.*
+- **Human-in-the-loop:** alto risco fica retido até um revisor (admin token) aprovar ou rejeitar.
 
 ### Exemplo
 
@@ -95,7 +111,7 @@ make race    # com detector de corrida — inclui o teste de concorrência
 
 Os testes de integração criam/derrubam um banco efêmero por teste. Por padrão usam o Postgres local via socket; ajuste com `NEOBANK_TEST_DSN`.
 
-> Defina `JWT_SECRET` ao subir a API (`make run`). Sem ele, um segredo de desenvolvimento é usado e um aviso é logado — não use em produção.
+> Defina `JWT_SECRET` e `ADMIN_TOKEN` ao subir a API (`make run`). Sem `JWT_SECRET`, um segredo de desenvolvimento é usado (com aviso) — não use em produção. Sem `ADMIN_TOKEN`, os endpoints administrativos ficam inacessíveis.
 
 ## Arquitetura
 
@@ -118,7 +134,7 @@ Plataforma construída em fatias, cada uma com seu próprio ciclo:
 
 - ✅ **M1** — Ledger Core: partidas dobradas, saldo derivado, concorrência.
 - ✅ **M2** — Carteira/Auth: usuários, JWT, depósito/saque/transferência, extrato.
-- **M3** — IA de segurança de transações: risk scoring em tempo real (regras → ML), na frente do ledger.
+- ✅ **M3** — Segurança de transações: motor de risco em camadas, worker e revisão humana.
 - **M4** — Event-driven + reconciliação (outbox, eventos, replay).
 - **M5** — Gateway de pagamento + multi-moeda/FX.
 - **M6** — Credit scoring + dashboard de observabilidade.
