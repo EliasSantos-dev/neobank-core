@@ -35,6 +35,7 @@ func TestProcessOnce_LowRiskCompletes(t *testing.T) {
 	require.Equal(t, 1, n)
 	got, _ := s.GetIntent(ctx, it.ID)
 	require.Equal(t, "completed", got.Status)
+	require.Equal(t, "low", got.RiskLevel) // score persistido mesmo na auto-aprovação
 }
 
 func TestProcessOnce_HighRiskUnderReview(t *testing.T) {

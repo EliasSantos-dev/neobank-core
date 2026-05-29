@@ -109,6 +109,15 @@ func (s *Store) ListIntentsByAccount(ctx context.Context, accountID uuid.UUID, l
 	return out, rows.Err()
 }
 
+// SetRisk grava o score/level/reasons sem mudar o status (observabilidade,
+// usado também quando o risco é baixo e a intenção é auto-aprovada).
+func (s *Store) SetRisk(ctx context.Context, id uuid.UUID, score int, level string, reasons []byte) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE transfer_intents SET risk_score=$2, risk_level=$3, risk_reasons=$4, updated_at=now() WHERE id=$1`,
+		id, score, level, reasons)
+	return err
+}
+
 func (s *Store) MarkUnderReview(ctx context.Context, id uuid.UUID, score int, level string, reasons []byte) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE transfer_intents SET status='under_review', risk_score=$2, risk_level=$3, risk_reasons=$4, updated_at=now()

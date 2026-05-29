@@ -64,10 +64,14 @@ func (w *Worker) processIntent(ctx context.Context, it store.Intent) error {
 		return err
 	}
 
+	reasons, _ := json.Marshal(a)
 	if a.Level == risk.Low {
+		// grava o score (observabilidade) e efetiva
+		if err := w.s.SetRisk(ctx, it.ID, a.Score, string(a.Level), reasons); err != nil {
+			return err
+		}
 		return w.s.CompleteIntent(ctx, it.ID)
 	}
-	reasons, _ := json.Marshal(a)
 	return w.s.MarkUnderReview(ctx, it.ID, a.Score, string(a.Level), reasons)
 }
 
