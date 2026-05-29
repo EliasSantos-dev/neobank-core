@@ -14,8 +14,13 @@ type WalletBalance struct {
 	Balance   int64
 }
 
+type CurrencySum struct {
+	Currency string
+	Sum      int64
+}
+
 type Input struct {
-	GlobalSum       int64 // Σ (créditos - débitos) de todas as contas
+	PerCurrency     []CurrencySum // Σ (créditos - débitos) por moeda — deve ser 0 em cada
 	Transfers       []TransferSums
 	Wallets         []WalletBalance
 	GatewayLedger   int64 // saldo da conta gateway no ledger
@@ -35,8 +40,10 @@ type Report struct {
 // Check aplica os invariantes; função pura, testável isoladamente.
 func Check(in Input) Report {
 	var d []Discrepancy
-	if in.GlobalSum != 0 {
-		d = append(d, Discrepancy{Kind: "conservation", Detail: fmt.Sprintf("Σ saldos = %d (esperado 0)", in.GlobalSum)})
+	for _, c := range in.PerCurrency {
+		if c.Sum != 0 {
+			d = append(d, Discrepancy{Kind: "conservation", Detail: fmt.Sprintf("moeda %s: Σ saldos = %d (esperado 0)", c.Currency, c.Sum)})
+		}
 	}
 	for _, t := range in.Transfers {
 		if t.Debits != t.Credits {

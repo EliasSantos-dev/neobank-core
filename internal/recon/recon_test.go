@@ -4,13 +4,34 @@ import "testing"
 
 func TestCheck_Healthy(t *testing.T) {
 	in := Input{
-		GlobalSum: 0,
-		Transfers: []TransferSums{{TransferID: "t1", Debits: 100, Credits: 100}},
-		Wallets:   []WalletBalance{{AccountID: "w1", Balance: 50}},
+		PerCurrency: []CurrencySum{{"BRL", 0}, {"USD", 0}},
+		Transfers:   []TransferSums{{TransferID: "t1", Debits: 100, Credits: 100}},
+		Wallets:     []WalletBalance{{AccountID: "w1", Balance: 50}},
 	}
 	r := Check(in)
 	if !r.Healthy {
 		t.Fatalf("esperava saudável, veio %+v", r.Discrepancies)
+	}
+}
+
+func TestCheck_PerCurrencyConservation(t *testing.T) {
+	healthy := Input{PerCurrency: []CurrencySum{{"BRL", 0}, {"USD", 0}}}
+	if !Check(healthy).Healthy {
+		t.Fatal("esperava saudável")
+	}
+	broken := Input{PerCurrency: []CurrencySum{{"BRL", 0}, {"USD", 5}}}
+	r := Check(broken)
+	if r.Healthy {
+		t.Fatal("esperava não-saudável")
+	}
+	found := false
+	for _, d := range r.Discrepancies {
+		if d.Kind == "conservation" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("esperava conservation: %+v", r.Discrepancies)
 	}
 }
 
@@ -32,9 +53,9 @@ func TestCheck_GatewayMismatch(t *testing.T) {
 
 func TestCheck_Discrepancies(t *testing.T) {
 	in := Input{
-		GlobalSum: 5,
-		Transfers: []TransferSums{{TransferID: "t1", Debits: 100, Credits: 90}},
-		Wallets:   []WalletBalance{{AccountID: "w1", Balance: -10}},
+		PerCurrency: []CurrencySum{{"BRL", 5}},
+		Transfers:   []TransferSums{{TransferID: "t1", Debits: 100, Credits: 90}},
+		Wallets:     []WalletBalance{{AccountID: "w1", Balance: -10}},
 	}
 	r := Check(in)
 	if r.Healthy {

@@ -11,9 +11,22 @@ import (
 func (s *Store) ReconInput(ctx context.Context) (recon.Input, error) {
 	var in recon.Input
 
-	if err := s.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(CASE WHEN direction='credit' THEN amount ELSE -amount END),0)::bigint FROM entries`).
-		Scan(&in.GlobalSum); err != nil {
+	crows, err := s.pool.Query(ctx,
+		`SELECT currency, COALESCE(SUM(CASE WHEN direction='credit' THEN amount ELSE -amount END),0)::bigint
+		 FROM entries GROUP BY currency`)
+	if err != nil {
+		return in, err
+	}
+	for crows.Next() {
+		var cs recon.CurrencySum
+		if err := crows.Scan(&cs.Currency, &cs.Sum); err != nil {
+			crows.Close()
+			return in, err
+		}
+		in.PerCurrency = append(in.PerCurrency, cs)
+	}
+	crows.Close()
+	if err := crows.Err(); err != nil {
 		return in, err
 	}
 
