@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/google/uuid"
@@ -119,10 +120,21 @@ func (s *Store) SetRisk(ctx context.Context, id uuid.UUID, score int, level stri
 }
 
 func (s *Store) MarkUnderReview(ctx context.Context, id uuid.UUID, score int, level string, reasons []byte) error {
-	_, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx,
 		`UPDATE transfer_intents SET status='under_review', risk_score=$2, risk_level=$3, risk_reasons=$4, updated_at=now()
-		 WHERE id=$1`, id, score, level, reasons)
-	return err
+		 WHERE id=$1`, id, score, level, reasons); err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]any{"intent_id": id, "risk_score": score, "risk_level": level})
+	if _, err := writeEventTx(ctx, tx, "intent.under_review", payload); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // CompleteIntent efetiva a intenção no ledger (idempotente) e marca como completed.
@@ -152,15 +164,23 @@ func (s *Store) CompleteIntent(ctx context.Context, id uuid.UUID) error {
 }
 
 func (s *Store) RejectIntent(ctx context.Context, id uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx,
-		`UPDATE transfer_intents SET status='rejected', updated_at=now() WHERE id=$1`, id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	ct, err := tx.Exec(ctx, `UPDATE transfer_intents SET status='rejected', updated_at=now() WHERE id=$1`, id)
 	if err != nil {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
 		return ErrIntentNotFound
 	}
-	return nil
+	payload, _ := json.Marshal(map[string]any{"intent_id": id})
+	if _, err := writeEventTx(ctx, tx, "intent.rejected", payload); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // RecipientIsNew indica se nunca houve transferência efetivada de from para to.
