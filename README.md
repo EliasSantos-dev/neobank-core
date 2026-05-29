@@ -6,7 +6,7 @@
 
 Núcleo de **ledger de partidas dobradas** para uma carteira digital, em Go + PostgreSQL. Correto, concorrente-safe e auditável por construção.
 
-Cobre **M1–M5b** de uma plataforma maior (ver [Roadmap](#roadmap)): ledger, carteira/auth, risco com revisão humana, eventos confiáveis, gateway de pagamento e multi-moeda/FX. O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência** — agora preservada **por moeda**.
+Plataforma fintech completa (M1–M6, ver [Roadmap](#roadmap)): ledger, carteira/auth, risco com revisão humana, eventos confiáveis, gateway de pagamento, multi-moeda/FX, credit scoring e observabilidade. O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência** — preservada **por moeda**.
 
 ## Princípio: history-as-truth
 
@@ -58,6 +58,9 @@ Carteira digital sobre o ledger. Autenticação por **JWT** (bcrypt nas senhas);
 | `GET`  | `/me/wallets` | ✅ | Saldos por moeda do usuário. |
 | `POST` | `/me/wallets` | ✅ | `{"currency"}` cria a wallet da moeda. |
 | `POST` | `/me/convert` | ✅ | `{"from","to","amount"}` converte entre as próprias wallets (`Idempotency-Key`). |
+| `GET`  | `/me/credit` | ✅ | Score de crédito + faixa + breakdown dos fatores. |
+| `GET`  | `/metrics` | — | Métricas no formato Prometheus. |
+| `GET`  | `/healthz` | — | Liveness/readiness (ping no banco). |
 | `POST` | `/transfers` | ✅ | `{"to_email","amount"}` — cria **intenção** avaliada por risco (`202`). |
 | `GET`  | `/me/transfers` | ✅ | Lista as intenções do usuário (status, score, nível). |
 | `GET`  | `/me/statement` | ✅ | Extrato paginado (`?limit=&offset=`). |
@@ -130,6 +133,25 @@ converter amount BRL → USD (mesma transação):
 - **Taxas:** `RateProvider` plugável (`internal/fx`) com `FakeRateProvider` (mid fixo + spread em bps); seam para uma API real. Par sem taxa → `422`.
 - **Reconciliação por moeda:** a conservação é verificada para **cada moeda** (somar BRL+USD não faz sentido); as contas `fx` entram no balanço de cada uma.
 
+## Credit scoring + Observabilidade (M6)
+
+**Credit scoring** (`internal/credit`) — score 0–100 **explicável**, derivado do próprio histórico transacional (sem bureau externo). Cinco fatores sobre a base 50:
+
+| Fator | Efeito |
+|-------|--------|
+| `account_age` | + até 15 (≈ +1/mês) |
+| `deposit_activity` | + até 15 (nº de depósitos) |
+| `balance` | + até 10 (saldo BRL) |
+| `withdrawal_ratio` | − até 15 (drenar muito penaliza) |
+| `risk_flags` | − até 25 (intenções `under_review`/`rejected` do M3) |
+
+`GET /me/credit` → `{score, band (poor/fair/good/excellent), factors:[...]}` — com o breakdown de cada fator (explicabilidade, não caixa-preta).
+
+**Observabilidade** (`internal/metrics`) — padrão Prometheus:
+- `GET /metrics` — `neobank_http_requests_total{method,status}`, `neobank_http_request_duration_seconds{method}`, `neobank_operations_total{op}` (deposit/withdraw/transfer/convert).
+- `GET /healthz` — `pool.Ping` no Postgres → `200 ok` / `503 degraded`.
+- Middleware HTTP mede duração/contagem; labels de baixa cardinalidade (sem UUIDs).
+
 ### Exemplo
 
 ```bash
@@ -187,6 +209,8 @@ internal/
   recon/       # verificação pura dos invariantes contábeis
   gateway/     # provedor de pagamento (fake) + service de cash-in/out
   fx/          # taxas de câmbio (provider) + conversão (big.Int)
+  credit/      # score de crédito por fatores (puro)
+  metrics/     # instrumentação Prometheus + /healthz
   api/         # transporte HTTP
 migrations/    # schema append-only (embutido via go:embed)
 ```
@@ -203,8 +227,8 @@ Plataforma construída em fatias, cada uma com seu próprio ciclo:
 - ✅ **M4** — Event-driven + reconciliação: outbox transacional, relay → NATS, auditoria, invariantes.
 - ✅ **M5a** — Gateway de pagamento: cash-in/out via provedor plugável, webhook idempotente, hold no saque, recon×gateway.
 - ✅ **M5b** — Multi-moeda / FX: wallets por moeda, conversão atômica via contas de câmbio, conservação por moeda.
-- **M6** — Credit scoring + dashboard de observabilidade.
+- ✅ **M6** — Credit scoring por fatores + observabilidade Prometheus (`/metrics`, `/healthz`).
 
-## Fora de escopo (até aqui)
+## Fora de escopo
 
-Multi-moeda, eventos/outbox, IA, gateway externo, snapshots de saldo, refresh tokens e reset de senha são milestones posteriores.
+Decisões conscientes de simplificação, documentadas onde aparecem: provedores externos reais (pagamento, taxas de câmbio, LLM) ficam como interfaces plugáveis com implementações fake/determinísticas; o NATS roda embutido (trocável por cluster externo via config); refresh tokens, reset de senha, RBAC completo, modelo de ML treinado, multi-worker com `SKIP LOCKED`, tracing distribuído e Grafana ficam fora — cada um é uma extensão natural sobre as fronteiras já existentes.
