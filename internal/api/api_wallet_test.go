@@ -38,21 +38,19 @@ func meBalance(t *testing.T, base, tok string) int64 {
 	return me.Balance
 }
 
-// TestDepositWithdraw cobre as operações síncronas de tesouraria.
-// (Transferência entre usuários é assíncrona — coberta nos testes e2e com worker.)
+// TestDepositWithdraw cobre depósito/saque via gateway (assíncronos): ambos
+// respondem 202 e só refletem no saldo após o webhook do provedor.
 func TestDepositWithdraw(t *testing.T) {
 	srv := newSrv(t)
 	register(t, srv.URL, "a@b.com", "segredo123")
 	tok := login(t, srv.URL, "a@b.com", "segredo123")
 
-	resp := authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 5000})
-	resp.Body.Close()
-	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	fund(t, srv.URL, tok, 5000) // deposita + confirma webhook
+	require.EqualValues(t, 5000, meBalance(t, srv.URL, tok))
 
-	resp = authedPost(t, srv.URL, "/me/withdraw", tok, map[string]int64{"amount": 500})
-	resp.Body.Close()
-	require.Equal(t, http.StatusCreated, resp.StatusCode)
-
+	wid := initiatePayment(t, srv.URL, "/me/withdraw", tok, 500)
+	require.EqualValues(t, 4500, meBalance(t, srv.URL, tok)) // hold reservou na hora
+	confirmWebhook(t, srv.URL, wid, "succeeded")
 	require.EqualValues(t, 4500, meBalance(t, srv.URL, tok))
 }
 
@@ -63,7 +61,7 @@ func TestTransferCreatesIntent(t *testing.T) {
 	register(t, srv.URL, "a@b.com", "segredo123")
 	register(t, srv.URL, "c@d.com", "segredo123")
 	tok := login(t, srv.URL, "a@b.com", "segredo123")
-	authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 5000}).Body.Close()
+	fund(t, srv.URL, tok, 5000)
 
 	resp := authedPost(t, srv.URL, "/transfers", tok, map[string]any{"to_email": "c@d.com", "amount": 1000})
 	defer resp.Body.Close()
@@ -84,8 +82,7 @@ func TestStatement(t *testing.T) {
 	srv := newSrv(t)
 	register(t, srv.URL, "a@b.com", "segredo123")
 	tok := login(t, srv.URL, "a@b.com", "segredo123")
-	r := authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 5000})
-	r.Body.Close()
+	fund(t, srv.URL, tok, 5000)
 
 	req, _ := http.NewRequest("GET", srv.URL+"/me/statement?limit=10", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -110,8 +107,7 @@ func TestTransferUnknownRecipient(t *testing.T) {
 	srv := newSrv(t)
 	register(t, srv.URL, "a@b.com", "segredo123")
 	tok := login(t, srv.URL, "a@b.com", "segredo123")
-	r := authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 100})
-	r.Body.Close()
+	fund(t, srv.URL, tok, 100)
 	resp := authedPost(t, srv.URL, "/transfers", tok, map[string]any{"to_email": "ninguem@x.com", "amount": 50})
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)

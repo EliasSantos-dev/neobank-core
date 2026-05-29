@@ -13,7 +13,7 @@ import (
 func statusFor(err error) int {
 	switch {
 	case errors.Is(err, ledger.ErrAccountNotFound), errors.Is(err, user.ErrUserNotFound),
-		errors.Is(err, store.ErrIntentNotFound):
+		errors.Is(err, store.ErrIntentNotFound), errors.Is(err, store.ErrPaymentNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, store.ErrNotUnderReview):
 		return http.StatusConflict

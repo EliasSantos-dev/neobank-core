@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/EliasSantos-dev/neobank-core/internal/gateway"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
 )
 
@@ -12,6 +13,7 @@ type handler struct {
 	s          *store.Store
 	secret     []byte
 	adminToken string
+	gw         *gateway.Service
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/EliasSantos-dev/neobank-core/internal/api"
+	"github.com/EliasSantos-dev/neobank-core/internal/gateway"
 	"github.com/EliasSantos-dev/neobank-core/internal/risk"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
 	"github.com/EliasSantos-dev/neobank-core/internal/worker"
@@ -19,7 +20,8 @@ import (
 func newSrvWithWorker(t *testing.T) (*httptest.Server, *worker.Worker) {
 	pool := itest.NewPostgres(t)
 	s := store.New(pool)
-	srv := httptest.NewServer(api.NewServer(s, []byte("test-secret"), "admin-token"))
+	gw := gateway.NewService(s, gateway.NewFakeProvider())
+	srv := httptest.NewServer(api.NewServer(s, []byte("test-secret"), "admin-token", gw))
 	t.Cleanup(srv.Close)
 	return srv, worker.New(s, risk.NewEngine(risk.RuleReasoningAdvisor{}, 50))
 }
@@ -37,7 +39,7 @@ func TestE2E_LowRiskAutoCompletes(t *testing.T) {
 	register(t, srv.URL, "a@b.com", "segredo123")
 	register(t, srv.URL, "c@d.com", "segredo123")
 	tok := login(t, srv.URL, "a@b.com", "segredo123")
-	authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 5000}).Body.Close()
+	fund(t, srv.URL, tok, 5000)
 	authedPost(t, srv.URL, "/transfers", tok, map[string]any{"to_email": "c@d.com", "amount": 100}).Body.Close()
 
 	_, err := w.ProcessOnce(context.Background())
@@ -50,7 +52,7 @@ func TestE2E_HighRiskReviewApprove(t *testing.T) {
 	register(t, srv.URL, "a@b.com", "segredo123")
 	register(t, srv.URL, "c@d.com", "segredo123")
 	tok := login(t, srv.URL, "a@b.com", "segredo123")
-	authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 10000}).Body.Close()
+	fund(t, srv.URL, tok, 10000)
 	// drena 95% + destinatário novo -> high
 	authedPost(t, srv.URL, "/transfers", tok, map[string]any{"to_email": "c@d.com", "amount": 9500}).Body.Close()
 	_, _ = w.ProcessOnce(context.Background())
@@ -82,7 +84,7 @@ func TestE2E_HighRiskReviewReject(t *testing.T) {
 	register(t, srv.URL, "a@b.com", "segredo123")
 	register(t, srv.URL, "c@d.com", "segredo123")
 	tok := login(t, srv.URL, "a@b.com", "segredo123")
-	authedPost(t, srv.URL, "/me/deposit", tok, map[string]int64{"amount": 10000}).Body.Close()
+	fund(t, srv.URL, tok, 10000)
 	authedPost(t, srv.URL, "/transfers", tok, map[string]any{"to_email": "c@d.com", "amount": 9500}).Body.Close()
 	_, _ = w.ProcessOnce(context.Background())
 
