@@ -6,7 +6,7 @@
 
 Núcleo de **ledger de partidas dobradas** para uma carteira digital, em Go + PostgreSQL. Correto, concorrente-safe e auditável por construção.
 
-Cobre **M1 (Ledger Core)**, **M2 (Carteira/Auth)**, **M3 (Segurança de transações)** e **M4 (Event-driven + Reconciliação)** de uma plataforma maior (ver [Roadmap](#roadmap)). O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência**, com uma carteira usável, uma camada de risco com revisão humana e um pipeline de eventos confiável por cima.
+Cobre **M1 (Ledger Core)**, **M2 (Carteira/Auth)**, **M3 (Segurança de transações)**, **M4 (Event-driven + Reconciliação)** e **M5a (Gateway de pagamento)** de uma plataforma maior (ver [Roadmap](#roadmap)). O foco é o que mais importa em fintech: **integridade do dinheiro sob concorrência**, com carteira, risco com revisão humana, eventos confiáveis e cash-in/out via gateway por cima.
 
 ## Princípio: history-as-truth
 
@@ -52,12 +52,15 @@ Carteira digital sobre o ledger. Autenticação por **JWT** (bcrypt nas senhas);
 | `POST` | `/auth/register` | — | Cria usuário + carteira (`{"email","password"}`). |
 | `POST` | `/auth/login` | — | Devolve `{"access_token"}`. |
 | `GET`  | `/me` | ✅ | Dados do usuário + saldo. |
-| `POST` | `/me/deposit` | ✅ | `{"amount"}` — tesouraria→carteira. |
-| `POST` | `/me/withdraw` | ✅ | `{"amount"}` — carteira→tesouraria. |
+| `POST` | `/me/deposit` | ✅ | `{"amount"}` — cash-in via gateway (`202`, confirma por webhook). |
+| `POST` | `/me/withdraw` | ✅ | `{"amount"}` — cash-out via gateway com hold (`202`). |
+| `GET`  | `/me/payments` | ✅ | Lista os pagamentos (depósitos/saques) do usuário. |
 | `POST` | `/transfers` | ✅ | `{"to_email","amount"}` — cria **intenção** avaliada por risco (`202`). |
 | `GET`  | `/me/transfers` | ✅ | Lista as intenções do usuário (status, score, nível). |
 | `GET`  | `/me/statement` | ✅ | Extrato paginado (`?limit=&offset=`). |
+| `POST` | `/webhooks/gateway` | — | Callback do provedor (idempotente). |
 | `POST` | `/admin/transfers/{id}/review` | admin | `{"decision":"approve"\|"reject"}` (header `X-Admin-Token`). |
+| `POST` | `/admin/reconcile` | admin | Roda a reconciliação e retorna o report. |
 
 Depósito/saque são síncronos (tesouraria — funding simulado até haver gateway real). Transferência entre usuários passa pela **camada de risco** (ver abaixo). Erros mapeados: não autenticado → `401`, destinatário inexistente → `404`, e-mail já usado / intenção fora de revisão → `409`, saldo insuficiente → `422`, valor inválido → `400`.
 
@@ -89,7 +92,23 @@ mudança de estado + evento  (MESMA transação → outbox)
 - **Relay** (`internal/relay`): publica os eventos não-enviados no barramento e marca como publicados. Semântica **at-least-once** — consumidores são idempotentes (não exactly-once; é o trade-off honesto do outbox).
 - **Barramento NATS** (`internal/events`): servidor NATS **real, embutido no processo** com conexão in-process (sem Docker/porta). No deploy real, troca-se por um cluster NATS externo só na config de conexão.
 - **Auditoria** (`internal/audit`): assina `transfer.>`/`intent.>` e materializa um `event_log` idempotente (dedup pela PK do evento) — um read-model durável.
-- **Reconciliação** (`internal/recon`): verifica os invariantes contábeis — **conservação** (Σ saldos = 0), **partidas dobradas** (débito=crédito por transfer) e **não-negatividade** das wallets. Exposta em `POST /admin/reconcile` (admin token) e no job `cmd/reconcile` (exit ≠ 0 se não-saudável).
+- **Reconciliação** (`internal/recon`): verifica os invariantes contábeis — **conservação** (Σ saldos = 0), **partidas dobradas** (débito=crédito por transfer), **não-negatividade** das wallets e **ledger × gateway** (saldo da conta gateway bate com a tabela `payments`). Exposta em `POST /admin/reconcile` (admin token) e no job `cmd/reconcile` (exit ≠ 0 se não-saudável).
+
+## Gateway de pagamento (M5a)
+
+Depósito e saque são **cash-in/out reais via gateway**, confirmados de forma **assíncrona por webhook**. Substituem o atalho síncrono da tesouraria do M2.
+
+```
+POST /me/deposit  → payment(pending) + charge ─────────────► webhook succeeded → gateway→wallet (credita)
+POST /me/withdraw → hold wallet→gateway (reserva) + payout ─► webhook succeeded → completed
+                                                            └► webhook failed    → gateway→wallet (estorna)
+```
+
+- **Provedor plugável** (`internal/gateway`): interface `PaymentProvider` com um `FakeProvider` determinístico (recusa valores `% 100 == 13`, como cartões de teste). Um `HTTPProvider` (Stripe/AbacatePay) plugaria a mesma interface.
+- **Hold no saque:** os fundos são reservados na solicitação (`wallet→gateway`), impedindo gasto duplo enquanto o payout está em trânsito; falha gera **estorno compensatório** (lançamento novo, não edição de histórico).
+- **Webhook idempotente** (`POST /webhooks/gateway`): dedup por `event_id` + guarda de estado terminal — reentrega não duplica efeito. Em produção seria validado por assinatura HMAC do provedor (seam documentado).
+- **Eventos** `payment.completed`/`payment.failed` no outbox, fluindo pela auditoria do M4.
+- **Conservação** preservada em todos os caminhos; a conta `gateway` (external) representa o dinheiro em trânsito.
 
 ### Exemplo
 
@@ -132,7 +151,7 @@ Os testes de integração criam/derrubam um banco efêmero por teste. Por padrã
 ## Arquitetura
 
 ```
-cmd/api        # entrypoint HTTP (sobe worker, relay e auditoria)
+cmd/api        # entrypoint HTTP (sobe worker, relay, auditoria e gateway)
 cmd/migrate    # aplica migrations embutidas (goose)
 cmd/reconcile  # job de reconciliação dos invariantes
 internal/
@@ -146,6 +165,7 @@ internal/
   relay/       # publica o outbox no barramento (at-least-once)
   audit/       # consome eventos e materializa o event_log
   recon/       # verificação pura dos invariantes contábeis
+  gateway/     # provedor de pagamento (fake) + service de cash-in/out
   api/         # transporte HTTP
 migrations/    # schema append-only (embutido via go:embed)
 ```
@@ -160,7 +180,8 @@ Plataforma construída em fatias, cada uma com seu próprio ciclo:
 - ✅ **M2** — Carteira/Auth: usuários, JWT, depósito/saque/transferência, extrato.
 - ✅ **M3** — Segurança de transações: motor de risco em camadas, worker e revisão humana.
 - ✅ **M4** — Event-driven + reconciliação: outbox transacional, relay → NATS, auditoria, invariantes.
-- **M5** — Gateway de pagamento + multi-moeda/FX.
+- ✅ **M5a** — Gateway de pagamento: cash-in/out via provedor plugável, webhook idempotente, hold no saque, recon×gateway.
+- **M5b** — Multi-moeda / FX: contas multi-moeda, conversão com spread.
 - **M6** — Credit scoring + dashboard de observabilidade.
 
 ## Fora de escopo (até aqui)
