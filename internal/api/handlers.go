@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/EliasSantos-dev/neobank-core/internal/fx"
 	"github.com/EliasSantos-dev/neobank-core/internal/gateway"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
 )
@@ -14,6 +15,7 @@ type handler struct {
 	secret     []byte
 	adminToken string
 	gw         *gateway.Service
+	rates      fx.RateProvider
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

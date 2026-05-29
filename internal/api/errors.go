@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/EliasSantos-dev/neobank-core/internal/fx"
 	"github.com/EliasSantos-dev/neobank-core/internal/ledger"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
 	"github.com/EliasSantos-dev/neobank-core/internal/user"
@@ -25,6 +26,8 @@ func statusFor(err error) int {
 		errors.Is(err, user.ErrInvalidEmail),
 		errors.Is(err, user.ErrWeakPassword):
 		return http.StatusBadRequest
+	case errors.Is(err, fx.ErrRateUnavailable):
+		return http.StatusUnprocessableEntity
 	case errors.Is(err, user.ErrEmailTaken):
 		return http.StatusConflict
 	case errors.Is(err, user.ErrInvalidCredentials):

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/EliasSantos-dev/neobank-core/internal/api"
+	"github.com/EliasSantos-dev/neobank-core/internal/fx"
 	"github.com/EliasSantos-dev/neobank-core/internal/gateway"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
 	itest "github.com/EliasSantos-dev/neobank-core/test"
@@ -18,7 +19,7 @@ func newSrv(t *testing.T) *httptest.Server {
 	pool := itest.NewPostgres(t)
 	s := store.New(pool)
 	gw := gateway.NewService(s, gateway.NewFakeProvider())
-	srv := httptest.NewServer(api.NewServer(s, []byte("test-secret"), "admin-token", gw))
+	srv := httptest.NewServer(api.NewServer(s, []byte("test-secret"), "admin-token", gw, fx.NewFakeRateProvider(50)))
 	t.Cleanup(srv.Close)
 	return srv
 }
