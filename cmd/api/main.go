@@ -12,6 +12,7 @@ import (
 	"github.com/EliasSantos-dev/neobank-core/internal/events"
 	"github.com/EliasSantos-dev/neobank-core/internal/fx"
 	"github.com/EliasSantos-dev/neobank-core/internal/gateway"
+	"github.com/EliasSantos-dev/neobank-core/internal/metrics"
 	"github.com/EliasSantos-dev/neobank-core/internal/relay"
 	"github.com/EliasSantos-dev/neobank-core/internal/risk"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
@@ -73,7 +74,10 @@ func main() {
 	// Taxas de câmbio (provider fake com 0,50% de spread; trocável por API real).
 	rates := fx.NewFakeRateProvider(50)
 
-	srv := api.NewServer(st, secret, adminToken, gw, rates)
+	// Observabilidade Prometheus.
+	m := metrics.New()
+
+	srv := api.NewServer(st, secret, adminToken, gw, rates, m, pool)
 	addr := ":8080"
 	log.Info("neobank ouvindo", "addr", addr)
 	if err := http.ListenAndServe(addr, srv); err != nil {
