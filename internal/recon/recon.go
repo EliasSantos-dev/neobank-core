@@ -15,9 +15,11 @@ type WalletBalance struct {
 }
 
 type Input struct {
-	GlobalSum int64 // Σ (créditos - débitos) de todas as contas
-	Transfers []TransferSums
-	Wallets   []WalletBalance
+	GlobalSum       int64 // Σ (créditos - débitos) de todas as contas
+	Transfers       []TransferSums
+	Wallets         []WalletBalance
+	GatewayLedger   int64 // saldo da conta gateway no ledger
+	GatewayExpected int64 // esperado pela tabela payments
 }
 
 type Discrepancy struct {
@@ -45,6 +47,9 @@ func Check(in Input) Report {
 		if w.Balance < 0 {
 			d = append(d, Discrepancy{Kind: "negative_wallet", Detail: fmt.Sprintf("wallet %s: saldo=%d", w.AccountID, w.Balance)})
 		}
+	}
+	if in.GatewayLedger != in.GatewayExpected {
+		d = append(d, Discrepancy{Kind: "gateway_mismatch", Detail: fmt.Sprintf("gateway ledger=%d esperado=%d", in.GatewayLedger, in.GatewayExpected)})
 	}
 	return Report{Healthy: len(d) == 0, Discrepancies: d}
 }

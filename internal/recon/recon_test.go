@@ -14,6 +14,22 @@ func TestCheck_Healthy(t *testing.T) {
 	}
 }
 
+func TestCheck_GatewayMismatch(t *testing.T) {
+	in := Input{GatewayLedger: 100, GatewayExpected: 100}
+	if !Check(in).Healthy {
+		t.Fatal("esperava saudável quando gateway bate")
+	}
+	in.GatewayExpected = 999
+	r := Check(in)
+	kinds := map[string]bool{}
+	for _, d := range r.Discrepancies {
+		kinds[d.Kind] = true
+	}
+	if !kinds["gateway_mismatch"] {
+		t.Fatalf("esperava gateway_mismatch: %+v", r.Discrepancies)
+	}
+}
+
 func TestCheck_Discrepancies(t *testing.T) {
 	in := Input{
 		GlobalSum: 5,

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 
+	"github.com/EliasSantos-dev/neobank-core/internal/ledger"
 	"github.com/EliasSantos-dev/neobank-core/internal/recon"
 )
 
@@ -44,13 +45,33 @@ func (s *Store) ReconInput(ctx context.Context) (recon.Input, error) {
 	if err != nil {
 		return in, err
 	}
-	defer wrows.Close()
 	for wrows.Next() {
 		var wb recon.WalletBalance
 		if err := wrows.Scan(&wb.AccountID, &wb.Balance); err != nil {
+			wrows.Close()
 			return in, err
 		}
 		in.Wallets = append(in.Wallets, wb)
 	}
-	return in, wrows.Err()
+	wrows.Close()
+	if err := wrows.Err(); err != nil {
+		return in, err
+	}
+
+	// saldo da conta gateway no ledger
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(CASE WHEN direction='credit' THEN amount ELSE -amount END),0)::bigint
+		 FROM entries WHERE account_id = $1`, ledger.GatewayBRL).Scan(&in.GatewayLedger); err != nil {
+		return in, err
+	}
+	// esperado: Σ(holds de saques ativos: pending/completed) − Σ(depósitos completed)
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(CASE
+		           WHEN kind='withdrawal' AND status IN ('pending','completed') THEN amount
+		           WHEN kind='deposit'    AND status='completed'                THEN -amount
+		           ELSE 0 END),0)::bigint
+		 FROM payments`).Scan(&in.GatewayExpected); err != nil {
+		return in, err
+	}
+	return in, nil
 }
