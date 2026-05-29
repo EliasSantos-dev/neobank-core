@@ -1,5 +1,6 @@
 # neobank-core
 
+[![CI](https://github.com/EliasSantos-dev/neobank-core/actions/workflows/ci.yml/badge.svg)](https://github.com/EliasSantos-dev/neobank-core/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-4169E1?logo=postgresql&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-race--checked-success)
