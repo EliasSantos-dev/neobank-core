@@ -1,0 +1,50 @@
+// Package recon verifica os invariantes contábeis do ledger.
+package recon
+
+import "fmt"
+
+type TransferSums struct {
+	TransferID string
+	Debits     int64
+	Credits    int64
+}
+
+type WalletBalance struct {
+	AccountID string
+	Balance   int64
+}
+
+type Input struct {
+	GlobalSum int64 // Σ (créditos - débitos) de todas as contas
+	Transfers []TransferSums
+	Wallets   []WalletBalance
+}
+
+type Discrepancy struct {
+	Kind   string
+	Detail string
+}
+
+type Report struct {
+	Healthy       bool
+	Discrepancies []Discrepancy
+}
+
+// Check aplica os invariantes; função pura, testável isoladamente.
+func Check(in Input) Report {
+	var d []Discrepancy
+	if in.GlobalSum != 0 {
+		d = append(d, Discrepancy{Kind: "conservation", Detail: fmt.Sprintf("Σ saldos = %d (esperado 0)", in.GlobalSum)})
+	}
+	for _, t := range in.Transfers {
+		if t.Debits != t.Credits {
+			d = append(d, Discrepancy{Kind: "double_entry", Detail: fmt.Sprintf("transfer %s: débitos=%d créditos=%d", t.TransferID, t.Debits, t.Credits)})
+		}
+	}
+	for _, w := range in.Wallets {
+		if w.Balance < 0 {
+			d = append(d, Discrepancy{Kind: "negative_wallet", Detail: fmt.Sprintf("wallet %s: saldo=%d", w.AccountID, w.Balance)})
+		}
+	}
+	return Report{Healthy: len(d) == 0, Discrepancies: d}
+}
