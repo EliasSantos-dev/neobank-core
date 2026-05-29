@@ -19,5 +19,6 @@ func NewServer(s *store.Store, secret []byte, adminToken string) http.Handler {
 	mux.HandleFunc("GET /me/transfers", h.requireAuth(h.listMyIntents))
 	mux.HandleFunc("GET /me/statement", h.requireAuth(h.statement))
 	mux.HandleFunc("POST /admin/transfers/{id}/review", h.requireAdmin(h.reviewIntent))
+	mux.HandleFunc("POST /admin/reconcile", h.requireAdmin(h.reconcile))
 	return mux
 }
