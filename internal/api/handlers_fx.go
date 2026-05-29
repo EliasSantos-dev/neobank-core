@@ -91,6 +91,7 @@ func (h handler) convert(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, statusFor(err), err.Error())
 		return
 	}
+	h.metrics.IncOperation("convert")
 	writeJSON(w, http.StatusOK, map[string]int64{"converted": out.Converted, "rate_e8": out.RateE8})
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/EliasSantos-dev/neobank-core/internal/fx"
 	"github.com/EliasSantos-dev/neobank-core/internal/gateway"
+	"github.com/EliasSantos-dev/neobank-core/internal/metrics"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
 )
 
@@ -16,6 +17,7 @@ type handler struct {
 	adminToken string
 	gw         *gateway.Service
 	rates      fx.RateProvider
+	metrics    *metrics.Metrics
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

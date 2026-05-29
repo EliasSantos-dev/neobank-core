@@ -48,6 +48,7 @@ func (h handler) createTransferIntent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.metrics.IncOperation("transfer")
 	writeJSON(w, http.StatusAccepted, map[string]any{"intent_id": it.ID, "status": it.Status})
 }
 

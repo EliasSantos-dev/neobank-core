@@ -39,6 +39,7 @@ func (h handler) initiate(w http.ResponseWriter, r *http.Request, kind string) {
 		writeErr(w, statusFor(err), err.Error())
 		return
 	}
+	h.metrics.IncOperation(kind)
 	writeJSON(w, http.StatusAccepted, p)
 }
 
