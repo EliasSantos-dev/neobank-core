@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/EliasSantos-dev/neobank-core/internal/api"
+	"github.com/EliasSantos-dev/neobank-core/internal/audit"
+	"github.com/EliasSantos-dev/neobank-core/internal/events"
+	"github.com/EliasSantos-dev/neobank-core/internal/relay"
 	"github.com/EliasSantos-dev/neobank-core/internal/risk"
 	"github.com/EliasSantos-dev/neobank-core/internal/store"
 	"github.com/EliasSantos-dev/neobank-core/internal/worker"
@@ -41,12 +44,26 @@ func main() {
 
 	st := store.New(pool)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Worker de risco em background: pontua intenções pendentes.
 	eng := risk.NewEngine(risk.RuleReasoningAdvisor{}, 50)
 	w := worker.New(st, eng)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	go w.Run(ctx, 2*time.Second)
+
+	// Barramento de eventos: NATS embutido + auditoria + relay do outbox.
+	bus, err := events.NewBus()
+	if err != nil {
+		log.Error("nats embutido", "err", err)
+		os.Exit(1)
+	}
+	defer bus.Close()
+	if err := audit.Start(ctx, bus, st); err != nil {
+		log.Error("audit", "err", err)
+		os.Exit(1)
+	}
+	go relay.New(st, bus).Run(ctx, 1*time.Second)
 
 	srv := api.NewServer(st, secret, adminToken)
 	addr := ":8080"
